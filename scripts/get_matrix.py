@@ -10,6 +10,10 @@ from scipy.ndimage import zoom
 from skimage.feature import canny,blob_doh
 from skimage.filters import threshold_otsu,hessian
 from skimage.draw import disk
+from skimage.measure import label
+from skimage.morphology import remove_small_objects
+#from skimage.color import label2rgb
+
 
 import gc
 
@@ -146,13 +150,15 @@ for marker in marker_names:
     thres=threshold_otsu(img)
     img_corr=img.copy()
     img_corr[img_corr<thres]=0
+    print(np.count_nonzero(img_corr))
 
-    if(np.count_nonzero(img_corr)>10000000000):
-        print("bad otsu")
+    if(np.count_nonzero(img_corr)>10000000):
         thres=np.percentile(img,0.99)
         img_corr[img_corr<thres]=0
+        print(np.count_nonzero(img_corr))
 
 
+    print("Running canny")
     edges = canny(img_corr,low_threshold=.75,
                   high_threshold=.99,
                   use_quantiles=True,
@@ -161,21 +167,18 @@ for marker in marker_names:
                   mask=pixel_mask)
     fig, (ax1, ax2) = plt.subplots(1, 2,figsize=(10, 8))
     small = edges[::8, ::8]
-    small = np.clip(1-small, 0,None)
+    #small = np.clip(1-small, 0,None)
     im1=ax1.imshow(small, cmap="binary")
 
     img_corr[edges==0] = 0
     img_corr = np.arcsinh(img_corr/ 5)    
     img_bin = bin_image(img_corr,BIN_SIZE)
-    im2=ax2.imshow(img_bin, cmap=plt.cm.gray)
-    plt.tight_layout() # Adjusts spacing to prevent overlap
-    plt.show()
 
     if(marker == "PGP95"):
         img_shapes=hessian(img_bin,alpha=.1)#black_ridges=False?
         img_bin[img_shapes==0] = 0
 
-    if("CD45" in ["CD45","CD20"]):
+    if(marker in ["CD45","CD20"]):
         img_shapes= blob_doh(img_bin,max_sigma=30)
         blob_mask = np.zeros(img_bin.shape[:2], dtype=bool)
         for y, x, sigma in img_shapes:
@@ -184,13 +187,27 @@ for marker in marker_names:
             blob_mask[rr, cc] = True
         img_bin[blob_mask==0]=0
 
+    if(marker in ["CD10","KRT8"]):
+        img_shapes=img_bin.copy()
+        img_shapes[img_shapes>0]=1
+        objects = label(img_shapes,connectivity=2)
+        # Separate objects into regions larger and smaller than 100 pixels
+        large_objects = remove_small_objects(objects, max_size=500)
+        img_bin[large_objects==0]=0
     
-    thres=threshold_otsu(img_bin)
-    img_bin[img_bin<thres]=0
+    small = img_bin[::8, ::8]
+    im2=ax2.imshow(small, cmap='inferno',
+           vmin=np.percentile(small, 5),
+           vmax=np.percentile(small, 99))
+    plt.tight_layout() # Adjusts spacing to prevent overlap
+    plt.show()    
+    #thres=threshold_otsu(img_bin)
+    #img_bin[img_bin<thres]=0
     marker_vec = img_bin.reshape(-1)[mask_flat]
     results.append(marker_vec)
 
     gc.collect()
+    
 # ============================================================
 # 5. SAVE FINAL MATRIX
 # ============================================================
