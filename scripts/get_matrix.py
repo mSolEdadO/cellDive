@@ -7,10 +7,9 @@ import matplotlib.pyplot as plt
 #from skimage.filters import gaussian
 import pandas as pd
 from scipy.ndimage import zoom
-from sklearn.linear_model import HuberRegressor
-from skimage.feature import canny
-from skimage.measure import label
-from skimage.filters import threshold_multiotsu
+from skimage.feature import canny,blob_doh
+from skimage.filters import threshold_otsu,hessian
+from skimage.draw import disk
 
 import gc
 
@@ -33,7 +32,7 @@ DAPI_MARKERS = ["DAPI_R1", "DAPI_R2"]
 
 
 BIN_SIZE = 40   # at 50 KRT8 fragments
-
+SIGMA=3
 OUTPUT_DIR = "/media/Lawrenson_Lab_NAS/uthscsa/group_data/CosMx_temp/SL260089/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -125,6 +124,7 @@ af_bin = bin_image(af_img,BIN_SIZE)
 mask_flat = meta_mask.reshape(-1)
 af_flat = af_bin.reshape(-1)[mask_flat]
 #dapi_flat = dapi_bin.reshape(-1)[mask_flat]
+
 # ============================================================
 # 4. MARKERS
 # ============================================================
@@ -143,42 +143,51 @@ for marker in marker_names:
     #im1=ax1.imshow(img, cmap='inferno',
     #           vmin=np.percentile(img, 5),
     #           vmax=np.percentile(img, 99))
-
-    edges = canny(img,low_threshold=.75,high_threshold=.99,use_quantiles=True,mode='reflect',sigma=5)
-    print("Processing...")
-    if marker in ["CD45","CD20","PGP95"]:
-        lab = label(edges)
-        areas = np.bincount(lab.ravel())          # area of every label, O(N) single pass
-        areas[0] = 0                                # label 0 is background, exclude it
-        edge_mask = areas >np.percentile(areas,75)
-        areas[edge_mask]=0
-        areas[areas>0]=1
-        edges = areas[lab]                     # fancy-index lookup, O(N), vectorized
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2,figsize=(10, 8))
-    im1=ax1.imshow(edges, cmap="binary")
-
+    thres=threshold_otsu(img)
     img_corr=img.copy()
+    img_corr[img_corr<thres]=0
+
+    if(np.count_nonzero(img_corr)>10000000000):
+        print("bad otsu")
+        thres=np.percentile(img,0.99)
+        img_corr[img_corr<thres]=0
+
+
+    edges = canny(img_corr,low_threshold=.75,
+                  high_threshold=.99,
+                  use_quantiles=True,
+                  mode='reflect',
+                  sigma=SIGMA,
+                  mask=pixel_mask)
+    fig, (ax1, ax2) = plt.subplots(1, 2,figsize=(10, 8))
+    small = edges[::8, ::8]
+    small = np.clip(1-small, 0,None)
+    im1=ax1.imshow(small, cmap="binary")
+
     img_corr[edges==0] = 0
-    img_corr = np.arcsinh(img_corr/ 5)
-    
+    img_corr = np.arcsinh(img_corr/ 5)    
     img_bin = bin_image(img_corr,BIN_SIZE)
-    marker_vec = img_bin.reshape(-1)[mask_flat]
-    alpha = compute_alpha(
-        marker_vec,
-        af_flat
-    )
-    print(f"alpha = {alpha:.3f}")
-    
-    #img_corr=np.clip(img_bin-alpha*af_bin,0,None)
-    img_corr=np.clip(img_bin-0.01*af_bin,0,None)
-    thres=threshold_multiotsu(img_corr)
-    img_corr[img_corr<thres[1]]=0
-    im2=ax2.imshow(img_corr, cmap=plt.cm.gray)
+    im2=ax2.imshow(img_bin, cmap=plt.cm.gray)
     plt.tight_layout() # Adjusts spacing to prevent overlap
     plt.show()
 
-    marker_vec = img_corr.reshape(-1)[mask_flat]
+    if(marker == "PGP95"):
+        img_shapes=hessian(img_bin,alpha=.1)#black_ridges=False?
+        img_bin[img_shapes==0] = 0
+
+    if("CD45" in ["CD45","CD20"]):
+        img_shapes= blob_doh(img_bin,max_sigma=30)
+        blob_mask = np.zeros(img_bin.shape[:2], dtype=bool)
+        for y, x, sigma in img_shapes:
+            radius = sigma * np.sqrt(2)  # Standard scaling for DoH/LoG blobs
+            rr, cc = disk((y, x), radius, shape=blob_mask.shape)
+            blob_mask[rr, cc] = True
+        img_bin[blob_mask==0]=0
+
+    
+    thres=threshold_otsu(img_bin)
+    img_bin[img_bin<thres]=0
+    marker_vec = img_bin.reshape(-1)[mask_flat]
     results.append(marker_vec)
 
     gc.collect()
@@ -206,3 +215,7 @@ df.to_csv(
 print("Done.")
 print(df.shape)
 print(f"Saved: {out_csv}")
+
+#plt.figure(figsize=(6,6))
+#plt.scatter(df["x"], -df["y"], c=df["CD45"], cmap="viridis", s=1)
+#plt.show()
