@@ -66,18 +66,6 @@ def bin_image(img, bin_size):
         bin_size).mean(axis=(1,3))
     return binned
 
-
-def compute_alpha(marker_vec, af_vec):#SLOW
-    pos_mask=(marker_vec>0)
-    X = af_vec[pos_mask].reshape(-1,1)
-    y = marker_vec[pos_mask]
-    model = HuberRegressor()
-    model.fit(X, y)
-    alpha = model.coef_[0]
-    # conservative cap
-    alpha = np.clip(alpha, 0.01, 0.5)
-    return alpha
-
 # =========================
 # 2. AF
 # =========================
@@ -113,11 +101,11 @@ print("Computing occupancy...")
 occupancy = bin_image(pixel_mask,BIN_SIZE)
 meta_mask = occupancy > .8# with dapi mask was .4 
 
-neg_mask =np.clip(1-meta_mask, 0,None)
-plt.figure(figsize=(8,8))
-plt.imshow(neg_mask, cmap=plt.cm.gray)
-plt.colorbar()
-plt.title("Mask")
+#neg_mask =np.clip(1-meta_mask, 0,None)
+#plt.figure(figsize=(8,8))
+#plt.imshow(neg_mask, cmap=plt.cm.gray)
+#plt.colorbar()
+#plt.title("Mask")
 #plt.savefig(os.path.join(OUTPUT_DIR, "Neg_mask.png"))
 
 # bin mask + get coordinates
@@ -150,13 +138,17 @@ for marker in marker_names:
     thres=threshold_otsu(img)
     img_corr=img.copy()
     img_corr[img_corr<thres]=0
-    print(np.count_nonzero(img_corr))
+    total=np.count_nonzero(img_corr)
+    print(total)
 
-    if(np.count_nonzero(img_corr)>10000000):
-        thres=np.percentile(img,0.99)
+    if(total>10000000 or total<1000000):
+        k=3000000
+        flat=img.reshape(-1)
+        flat=flat[flat != 0]
+        largest_vals = np.partition(flat, -k)[-k:]# Create a flat boolean mask
+        thres = np.min(largest_vals)
+        img_corr=img.copy()
         img_corr[img_corr<thres]=0
-        print(np.count_nonzero(img_corr))
-
 
     print("Running canny")
     edges = canny(img_corr,low_threshold=.75,
@@ -175,7 +167,7 @@ for marker in marker_names:
     img_bin = bin_image(img_corr,BIN_SIZE)
 
     if(marker == "PGP95"):
-        img_shapes=hessian(img_bin,alpha=.1)#black_ridges=False?
+        img_shapes=hessian(img_bin)#black_ridges=False?
         img_bin[img_shapes==0] = 0
 
     if(marker in ["CD45","CD20"]):
@@ -196,9 +188,7 @@ for marker in marker_names:
         img_bin[large_objects==0]=0
     
     small = img_bin[::8, ::8]
-    im2=ax2.imshow(small, cmap='inferno',
-           vmin=np.percentile(small, 5),
-           vmax=np.percentile(small, 99))
+    im2=ax2.imshow(small, cmap='binary')
     plt.tight_layout() # Adjusts spacing to prevent overlap
     plt.show()    
     #thres=threshold_otsu(img_bin)
@@ -207,7 +197,7 @@ for marker in marker_names:
     results.append(marker_vec)
 
     gc.collect()
-    
+
 # ============================================================
 # 5. SAVE FINAL MATRIX
 # ============================================================
