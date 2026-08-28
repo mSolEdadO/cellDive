@@ -28,7 +28,7 @@ set_threshold<-function(values){
 	 th<-max(which(th==min(th):max(th)))
          th<-d$x[th]}
      return(th)}
-lapply(data,function(x) 
+thr<-lapply(data,function(x) 
     sapply(unique(x$protein),function(y) 
         set_threshold(x$normi[x$protein==y])))
 thr<-lapply(thr,function(x)
@@ -58,13 +58,10 @@ names(summary_plots)<-names(data)
 ```{r}
 temp<-lapply(filtered,function(x) x%>%filter(protein%in%c("CD20","CD45")))
 for (i in names(temp)) {
-    temp[[i]]$cl<-dbscan(temp[[i]][,3:4],eps = 10,minPts = 10)$cluster
+    temp[[i]]$cl<-dbscan(temp[[i]][,1:2],eps = 10,minPts = 30)$cluster
 }
 temp<-lapply(temp,function(x) 
-    x%>%filter(cl!=0)%>%ungroup()%>%add_count(cl)%>%filter(n>2)%>%select(-n))
-temp<-lapply(temp,function(i) 
-    i%>%distinct(cl,protein)%>%add_count(cl)%>%filter(n==2)%>%select(cl)%>%
-    inner_join(i)%>%distinct(x,y,cl))
+    x%>%filter(cl!=0)%>%ungroup())
 lapply(names(temp), function(x) filtered[[x]]%>%left_join(temp[[x]])%>%
     mutate(protein=ifelse(!is.na(cl),"LA",protein))%>%ggplot(aes(x=x,y=-y,col=protein))+
     geom_point(size=.1)+scale_color_manual(values=protecols)+
